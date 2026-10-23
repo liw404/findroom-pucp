@@ -1,0 +1,211 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL") // postgresql://findroom_user:findroom_2026_secure@localhost:5432/findroom_db
+}
+
+enum Role {
+  ESTUDIANTE
+  ARRENDADOR
+  ADMIN
+}
+
+enum RoomType {
+  INDIVIDUAL
+  COMPARTIDA
+  MINIDEPARTAMENTO
+  ESTUDIO
+}
+
+enum BathroomType {
+  PRIVADO
+  COMPARTIDO
+}
+
+enum RoomStatus {
+  DISPONIBLE
+  ALQUILADO
+  PAUSADO
+}
+
+enum ContactRequestStatus {
+  PENDIENTE
+  ACEPTADA
+  RECHAZADA
+}
+
+enum ContractStatus {
+  ACTIVO
+  FINALIZADO
+  CANCELADO
+}
+
+/// Modelo de Usuario (RF-1, RF-2, RF-5, RF-15, RF-24, RF-31)
+model User {
+  id                  String    @id @default(uuid())
+  email               String    @unique @db.VarChar(150)
+  passwordHash        String?   @db.VarChar(255)
+  fullName            String    @db.VarChar(120)
+  role                Role      @default(ESTUDIANTE)
+
+  // Campos de Estudiante (RF-1, RF-5: correo institucional @pucp.edu.pe inmutable)
+  codigoPucp          String?   @unique @db.VarChar(12)
+  facultad            String?   @db.VarChar(100)
+
+  // Campos de Arrendador (RF-2, RF-5: DNI de 8 dígitos y Partida Registral inmutables)
+  dni                 String?   @unique @db.Char(8)
+  partidaRegistral    String?   @unique @db.VarChar(30)
+  whatsapp            String?   @db.VarChar(20)
+  isReniecVerified    Boolean   @default(false)
+  isSunarpVerified    Boolean   @default(false)
+  isVerified          Boolean   @default(false)
+
+  // Calificación acumulada del arrendador (RF-24)
+  averageRating       Float     @default(0)
+  totalReviews        Int       @default(0)
+
+  // Control de bloqueo progresivo de login (RF-31: 5 intentos -> 5, 15 y 30 min)
+  failedLoginAttempts Int       @default(0)
+  lockoutLevel        Int       @default(0)
+  lockedUntil         DateTime?
+
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  // Relaciones
+  rooms               Room[]           @relation("LandlordRooms")
+  contactRequests     ContactRequest[] @relation("StudentContactRequests")
+  studentContracts    Contract[]       @relation("StudentContracts")
+  landlordContracts   Contract[]       @relation("LandlordContracts")
+  reviewsWritten      Review[]         @relation("StudentReviews")
+  reviewsReceived     Review[]         @relation("LandlordReviews")
+
+  @@index([role])
+  @@index([email])
+}
+
+/// Modelo de Habitación (RF-7, RF-8, RF-11, RF-12, RF-18)
+model Room {
+  id                   String       @id @default(uuid())
+  landlordId           String
+  title                String       @db.VarChar(120)
+  type                 RoomType     @default(INDIVIDUAL)
+  district             String       @db.VarChar(50)
+  address              String       @db.VarChar(200)
+  monthlyPrice         Float
+  areaSqm              Float
+  bathroomType         BathroomType @default(PRIVADO)
+  isFurnished          Boolean      @default(true)
+
+  // Servicios incluidos (RF-7: agua, luz, wifi)
+  includesWater        Boolean      @default(true)
+  includesElectricity  Boolean      @default(true)
+  includesWifi         Boolean      @default(true)
+  includedServices     String[]     @default(["Agua", "Luz", "WiFi"])
+
+  // RF-7: Descripción obligatoria entre 30 y 300 caracteres
+  description          String       @db.VarChar(300)
+
+  // RF-7: Entre 3 y 10 fotografías de alta resolución
+  photos               String[]
+
+  // RF-11 & RF-12: Cercanía al campus PUCP
+  distanceToPucpKm     Float        @default(1.0)
+  walkingMinutesToPucp Int          @default(12)
+
+  // RF-18: Habitaciones con estado ALQUILADO nunca aparecen en los resultados del buscador
+  status               RoomStatus   @default(DISPONIBLE)
+
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  // Relaciones (RF-8: onDelete Restrict impide borrado accidental con solicitudes/contratos)
+  landlord             User             @relation("LandlordRooms", fields: [landlordId], references: [id], onDelete: Restrict)
+  contactRequests      ContactRequest[]
+  contracts            Contract[]
+  reviews              Review[]
+
+  @@index([district, status])
+  @@index([monthlyPrice])
+  @@index([bathroomType, isFurnished])
+  @@index([distanceToPucpKm])
+  @@index([landlordId])
+}
+
+/// Solicitud de Contacto (RF-8, RF-15, RF-16)
+model ContactRequest {
+  id          String               @id @default(uuid())
+  studentId   String
+  roomId      String
+  message     String?              @db.VarChar(300)
+  status      ContactRequestStatus @default(PENDIENTE)
+  respondedAt DateTime?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  student     User                 @relation("StudentContactRequests", fields: [studentId], references: [id], onDelete: Cascade)
+  room        Room                 @relation(fields: [roomId], references: [id], onDelete: Restrict)
+
+  // Índices para validar RF-16 (ventana de 48h por estudiante/habitación) y RF-8 (bloqueo de eliminación)
+  @@index([studentId, roomId, createdAt])
+  @@index([roomId, status])
+}
+
+/// Contrato de Alquiler (RF-23: requisito previo obligatorio para calificar; transacción ocurre fuera)
+model Contract {
+  id          String         @id @default(uuid())
+  roomId      String
+  studentId   String
+  landlordId  String
+  startDate   DateTime       @default(now())
+  endDate     DateTime?
+  monthlyRent Float
+  status      ContractStatus @default(ACTIVO)
+  notes       String?        @db.VarChar(300)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  room        Room           @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  student     User           @relation("StudentContracts", fields: [studentId], references: [id], onDelete: Restrict)
+  landlord    User           @relation("LandlordContracts", fields: [landlordId], references: [id], onDelete: Restrict)
+  review      Review?
+
+  @@index([studentId, roomId])
+  @@index([landlordId])
+}
+
+/// Reseña y Calificación (RF-23, RF-24: 1 a 5 estrellas; comentario de 30-300 chars obligatorio si <= 2 estrellas)
+model Review {
+  id          String   @id @default(uuid())
+  contractId  String   @unique
+  roomId      String
+  studentId   String
+  landlordId  String
+  rating      Int
+  comment     String?  @db.VarChar(300)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  contract    Contract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+  room        Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  student     User     @relation("StudentReviews", fields: [studentId], references: [id], onDelete: Cascade)
+  landlord    User     @relation("LandlordReviews", fields: [landlordId], references: [id], onDelete: Cascade)
+
+  @@index([landlordId])
+  @@index([roomId])
+}
+
+/// Registro de Notificaciones Simuladas (ARQUITECTURA_MOCKS: INotificationService)
+model NotificationLog {
+  id             String   @id @default(uuid())
+  recipientEmail String   @db.VarChar(150)
+  subject        String   @db.VarChar(200)
+  message        String   @db.Text
+  eventType      String   @db.VarChar(60)
+  createdAt      DateTime @default(now())
+
+  @@index([recipientEmail])
+}

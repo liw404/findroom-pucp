@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: findroom_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: findroom_user
+      POSTGRES_PASSWORD: findroom_2026_secure
+      POSTGRES_DB: findroom_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-pucp-navy: #0F2042;
+  --color-pucp-royal: #1D4ED8;
+  --color-bg-ivory: #F8F9FA;
+  --color-surface: #FFFFFF;
+  --color-border: #E2E8F0;
+  --color-verified-green: #059669;
+  --color-alert-red: #DC2626;
+}
+
+@layer base {
+  body {
+    background-color: #F8F9FA;
+    color: #0F172A;
+    font-family: 'Plus Jakarta Sans', 'Inter', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
